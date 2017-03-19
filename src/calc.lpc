@@ -1,4 +1,118 @@
 %lex
+
+%class CalcLexer
+%field output_type %{rust%}
+
 %%
+
+\d+             return "num"
+\+              return "+"
+\-              return "-"
+\*              return "*"
+\/              return "/"
+\(              return "("
+\)              return ")"
+\s+             /* skip */
+
 /lex
+
+%class CalcParser
+%lexer_name CalcLexer
+%field output_type %{rust%}
+%{
+extern crate libc;
+use std;
+
+#[repr(C)]
+#[derive(Debug)]
+pub enum CalcNodeType {
+    Add = 0,
+    Sub = 1,
+    Mul = 2,
+    Div = 3,
+    Minus = 4,
+    Num = 5,
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct CalcNode {
+    node_type: CalcNodeType,
+    left: *mut CalcNode,
+    right: *mut CalcNode,
+    str_val: *mut u8,
+}
+
+impl CalcNode {
+    fn new_ptr() -> *mut CalcNode {
+        unsafe {
+            let p: *mut libc::c_void = libc::calloc(1, std::mem::size_of::<CalcNode>());
+            let node: &mut CalcNode = std::mem::transmute(p);
+            node
+        }
+    }
+
+    pub fn free_ptr(p: *mut CalcNode) {
+        unsafe {
+            let node = &mut *p;
+            if !node.left.is_null() {
+                Self::free_ptr(node.left);
+            }
+            if !node.right.is_null() {
+                Self::free_ptr(node.right);
+            }
+            if !node.str_val.is_null() {
+                libc::free(node.str_val as *mut _);
+            }
+            libc::free(node as *mut CalcNode as *mut _);
+        }
+    }
+
+    fn new_node1(node_type: CalcNodeType, left: Json, right: Json) -> Option<Json>
+    {
+        let node = Self::new_ptr();
+        unsafe {
+            (*node).node_type = node_type;
+            (*node).left = std::mem::transmute(left.as_u64().unwrap());
+            (*node).right = std::mem::transmute(right.as_u64().unwrap());
+        }
+        return Some(Json::U64(node as u64));
+    }
+}
+%}
+%initial %{
+
+%}
+%left '+' '-'
+%left '*' '/'
+%left uminus
+
 %%
+
+Exp : Exp '+' Exp { $$ = CalcNode::new_node1(CalcNodeType::Add, $1, $3); }
+    | Exp '-' Exp { $$ = CalcNode::new_node1(CalcNodeType::Sub, $1, $3); }
+    | Exp '*' Exp { $$ = CalcNode::new_node1(CalcNodeType::Mul, $1, $3); }
+    | Exp '/' Exp { $$ = CalcNode::new_node1(CalcNodeType::Div, $1, $3); }
+    | '-' Exp
+    {
+        let node = CalcNode::new_ptr();
+        unsafe {
+            (*node).node_type = CalcNodeType::Minus;
+            (*node).left = std::mem::transmute($2.as_u64().unwrap());
+        };
+        $$ = Some(Json::U64(node as u64));
+    }
+    | '(' Exp ')' { $$ = Some($2); }
+    | num
+    {
+        let node = CalcNode::new_ptr();
+        unsafe {
+            let bytes: Vec<u8> = Vec::from($1.as_string().unwrap());
+            let s_ptr = libc::calloc(bytes.len() + 1, 1);
+            libc::memcpy(s_ptr, bytes.as_ptr() as *const _, bytes.len());
+            (*node).node_type = CalcNodeType::Num;
+            (*node).str_val = s_ptr as *mut _;
+        }
+        $$ = Some(Json::U64(node as u64));
+    }
+    ;

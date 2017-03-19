@@ -5,6 +5,7 @@ authors = ["aristotle9 <lanfan.1987@gmail.com>"]
 
 [dependencies]
 libc = "0.2.21"
+rustc-serialize = "0.3"
 
 [lib]
 name = "calc"
